@@ -84,5 +84,6 @@ export async function renderPost({ themeId, seed } = {}) {
     seed,
     images,               // [{ name, buffer(PNG) }]
     caption: buildCaption(theme), // { recommended: {title, body}, options: [...] }
+    captionMd: captionMarkdown(theme), // full caption.md (4 options) for the ZIP
   };
 }

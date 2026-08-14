@@ -5,8 +5,10 @@ carousel in the **a.png card style** — reproduced **entirely in code** (no ima
 file, no AI image generation). It picks one of ~30 built-in "listicle" themes
 (e.g. *"7 AI tools that feel like cheating"*), renders every slide with
 `@napi-rs/canvas` at exact size **in memory**, and hands everything back in the
-tool **response**: the post title + overview as text, plus every slide as an inline
-PNG. **Nothing is written to disk** — the response is the deliverable.
+tool **response**: the post title + overview as text, a **download URL for a ZIP**
+of every slide + `caption.md`, and the **cover inline as a preview**. Bundling one
+small ZIP link (instead of many big inline images) is what survives host size caps
+and code-mode servers, and lets the user grab the whole set at once.
 
 ![preview](assets/preview.png)
 
@@ -23,6 +25,7 @@ PNG. **Nothing is written to disk** — the response is the deliverable.
 | Method / Path | Purpose |
 |---|---|
 | `POST /mcp` | MCP over Streamable HTTP (stateless — one server per request). |
+| `GET /download/<id>.zip` | Downloads a generated post as a ZIP (slides + `caption.md`). |
 | `GET /health` | Liveness + theme count. |
 
 ## Tools
@@ -30,30 +33,34 @@ PNG. **Nothing is written to disk** — the response is the deliverable.
 | Tool | Args | What it does |
 |---|---|---|
 | `list_themes` | — | Lists the ~30 themes (`id`, `title`, item count). |
-| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory and returns it in the **response**: one text block (post title + overview, English), then every slide as an inline PNG. Omit `themeId` for a **random** theme. |
+| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, and returns: one text block (title + overview + **ZIP download URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. |
 
 ## Run
 
 ```bash
 cd mcp-post-generator
 npm install
-PORT=8787 node src/index.js
+PORT=8787 PUBLIC_BASE_URL=https://your-host node src/index.js
 ```
 
 - `PORT` — listen port (default `8787`).
+- `PUBLIC_BASE_URL` — external base URL used to build the ZIP download links. Set it
+  to whatever URL the server is reachable at (proxy, tunnel, or a host). Defaults to
+  `http://localhost:PORT`.
 
-The server never writes to disk — every post is rendered in memory and returned in
-the tool response (title + overview text, plus each slide as an inline PNG).
+Nothing is written to disk — posts are rendered in memory and the ZIP is kept in a
+small in-memory cache (last 30) served at `/download/<id>.zip`.
 
 ### Docker
 
 ```bash
 docker build -t post-generator-b .
-docker run --rm -p 8787:8787 post-generator-b
+docker run --rm -p 8787:8787 -e PUBLIC_BASE_URL=https://your-host post-generator-b
 # clients -> http://localhost:8787/mcp
 ```
 
-The container runs as a non-root user and writes nothing at runtime.
+The container runs as a non-root user and writes nothing at runtime (the ZIP lives
+in an in-memory cache).
 
 ## Register in an MCP client
 
@@ -77,7 +84,7 @@ claude mcp add --transport http post-generator-b https://your-host/mcp
 ```
 
 Then ask: *"generate a random post"* → the assistant calls `generate_post` and gets
-the title + overview text and all the slide images back in the response.
+the title + overview, a ZIP download link for all slides, and the cover as a preview.
 
 ### Host on Nodeflare
 
@@ -104,8 +111,9 @@ Everything lives in `src/themes.js`. Each theme is:
 
 ## Files
 
-- `src/index.js` — remote MCP server (Streamable HTTP); returns text + inline images; exports `createApp`
+- `src/index.js` — remote MCP server (Streamable HTTP) + ZIP download endpoint; exports `createApp`
 - `src/generate.js` — `renderPost()`: build slide list → render to PNG buffers in memory (no disk)
+- `src/zip.js` — dependency-free ZIP writer (STORE method) for bundling the slides
 - `src/render.js` — paper + blue card + chrome + cover/item/closing layouts
 - `src/illustrations.js` — flat line-art icons + the busy cover scene (a.png style)
 - `src/themes.js` — the ~30 themes

@@ -1,9 +1,9 @@
 {
   "name": "mcp-post-generator-b",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Remote MCP server (Streamable HTTP) that renders TikTok/IG carousel posts (1080x1320) entirely in code, in memory, and returns the slide PNGs + an English title/overview over the protocol.",
+  "description": "Remote MCP server (Streamable HTTP) that renders TikTok/IG carousel posts (1080x1320) entirely in code, in memory, and returns an English title/overview + a downloadable ZIP of all slides (plus the cover inline as a preview).",
   "license": "MIT",
   "bin": {
     "mcp-post-generator": "src/index.js"
