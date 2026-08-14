@@ -103,6 +103,15 @@ export function createApp() {
 
   // Streamable HTTP MCP endpoint (stateless: new server+transport per request).
   app.post('/mcp', async (req, res) => {
+    // The Streamable HTTP spec requires POSTs to Accept BOTH application/json and
+    // text/event-stream, else the transport replies 406 -32000 "Not Acceptable".
+    // Some hosts' internal clients (e.g. code-mode sandboxes) omit this header and
+    // then fail to call their own tools. We only ever return those two types, so
+    // normalize the header here to accept whatever the client actually sent.
+    const accept = req.headers.accept || '';
+    if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+      req.headers.accept = 'application/json, text/event-stream';
+    }
     const server = buildServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); server.close(); });
