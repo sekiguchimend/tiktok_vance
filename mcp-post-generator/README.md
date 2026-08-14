@@ -1,47 +1,57 @@
 # post-generator-b (MCP, stdio)
 
-A **stdio** MCP server that generates a TikTok/Instagram carousel in the **a.png
-card style** — reproduced **entirely in code** (no image file, no AI image
-generation). It picks one of ~30 built-in "listicle" themes (e.g. *"7 AI tools that
-feel like cheating"*), renders every slide with `@napi-rs/canvas` at exact size **in
-memory**, bundles them into a ZIP, uploads the ZIP to a temporary file host, and hands
-back in the tool **response**: the post title + overview as text, the **ZIP download
-URL**, and the **cover inline as a preview**. **Nothing is written to disk.**
+A **stdio** MCP server that is a **post renderer, not a content database**. It gives
+the calling AI **30 post topics** (titles) and a **renderer**. The AI picks a topic,
+**researches real, current tools/sites and writes the copy itself**, then calls
+`render_post` — which draws that content in the **a.png card style** (reproduced
+entirely in code, 1080×1320), bundles the slides into a ZIP, uploads it to a
+temporary file host, and returns the **ZIP download URL** + the **cover inline** as a
+preview.
 
-Bundling one small ZIP link (instead of many big inline images) is what survives host
-size caps and code-mode sandboxes, and lets the user grab the whole set at once.
-
-> The ZIP is uploaded to **litterbox** (fallback **0x0.st**), so the link is
-> **temporary** — download it soon. See *Uploads & expiry* below.
+**The AI owns the content; this server owns the pixels.** Nothing is hardcoded per
+topic and nothing is written to disk.
 
 ![preview](assets/preview.png)
 
-## Transport
+## Flow
 
-**stdio** — JSON-RPC over stdin/stdout. This is how stdio→SSE hosts (Nodeflare /
-code-mode) launch and bridge it; the ZIP upload only needs **outbound HTTPS**, so no
-port is exposed. (This mirrors the sibling `account_a` server.)
+1. `list_themes` (or `pick_theme`) → choose one of the 30 titles, e.g. *"7 AI tools
+   that feel like cheating"*.
+2. The AI researches the 7 real tools and writes each `{ name, tag, desc, points,
+   motif }` — all in **English**.
+3. `render_post` → styled carousel → ZIP uploaded → download URL + cover preview.
 
 ## Tools
 
 | Tool | Args | What it does |
 |---|---|---|
-| `list_themes` | — | Lists the ~30 themes (`id`, `title`, item count). |
-| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, uploads it to a temporary host, and returns: one text block (title + overview + **ZIP URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. On any failure it returns `isError` with the actual message. |
+| `list_themes` | — | The 30 topics (`id`, `title`, item count, `eyebrow`, `nodeflareFit`). |
+| `pick_theme` | `seed?` | One random topic + guidance on how to fill it in + the valid motif icon names. |
+| `render_post` | `title`, `items[]`, `eyebrow?`, `subtitle?`, `hook?`, `closing?`, `caption?`, `seed?` | Renders AI-authored content, zips + uploads it, returns the ZIP URL + the cover inline. All text must be English (CJK is rejected). |
+
+`render_post` item shape: `{ name, tag?, desc, points?: string[], motif? }`, one per
+slide. `motif`/`hook` are icon names (see `src/illustrations.js`): `robot`, `plug`,
+`code`, `search`, `chart`, `shield`, `chat`, `image`, `video`, `mic`, `pen`, `doc`,
+`brain`, `bolt`, `globe`, `gear`, `rocket`, `sparkle`, `magnet`, … (unknown names
+fall back to a default icon).
+
+### Nodeflare
+
+`nodeflareFit` marks topics where Nodeflare is a natural pick. Nodeflare is **MCP
+hosting**, not an MCP server — describe it as the hosting/agent-tools layer (host any
+stdio MCP server as an SSE endpoint from a GitHub URL, per-method auth, full logs, 3
+free). `pick_theme` returns the accurate fact sheet to use.
 
 ## Uploads & expiry
 
-The ZIP is sent to a no-auth temporary file host using Node's built-in `fetch` /
-`FormData` — no HTTP library:
+The ZIP is sent to a no-auth temporary file host via Node's built-in `fetch` /
+`FormData` (no HTTP library):
 
-- **litterbox** (`litter.catbox.moe`) — primary. Auto-deletes after the TTL; the URL
-  expires with it. Allowed TTLs: `1h` / `12h` / `24h` / `72h`, set via
-  `MCP_POST_UPLOAD_TTL` (default `72h`, the max).
-- **0x0.st** — fallback if litterbox fails. Retention is size-based (~30–365 days;
-  smaller files last longer).
+- **litterbox** (`litter.catbox.moe`) — primary. TTL `1h`/`12h`/`24h`/`72h` via
+  `MCP_POST_UPLOAD_TTL` (default `72h`). The URL expires with the file.
+- **0x0.st** — fallback; size-based retention (~30–365 days).
 
-⚠️ Both are **temporary** — this is "download it soon" delivery, not permanent
-storage. For permanent links, swap the uploader for R2/S3 (easy to add).
+⚠️ Temporary — "download it soon". For permanent links, swap in R2/S3.
 
 ## Run
 
@@ -51,11 +61,6 @@ npm install
 node src/index.js          # speaks MCP over stdio
 ```
 
-- `MCP_POST_UPLOAD_TTL` — litterbox TTL: `1h` / `12h` / `24h` / `72h` (default `72h`).
-
-Nothing is written to disk — posts are rendered in memory and the ZIP is uploaded to a
-temporary file host.
-
 ### Docker
 
 ```bash
@@ -63,12 +68,10 @@ docker build -t post-generator-b .
 docker run --rm -i --init post-generator-b
 ```
 
-Runs as a non-root user and writes nothing at runtime. It only needs **outbound**
-HTTPS to the upload hosts (`litter.catbox.moe`, `0x0.st`).
+Runs as a non-root user, writes nothing at runtime, and only needs **outbound**
+HTTPS to the upload hosts.
 
 ## Register in an MCP client
-
-Launch the server as a local stdio command:
 
 ```json
 {
@@ -81,45 +84,21 @@ Launch the server as a local stdio command:
 }
 ```
 
-Claude Code CLI:
-
-```bash
-claude mcp add post-generator-b -- node /absolute/path/to/mcp-post-generator/src/index.js
-```
-
 ### Host on Nodeflare
 
-It's a plain stdio MCP server, so it deploys straight from a Git URL: Nodeflare runs
-it and converts stdio → SSE for clients. No port, no build step (plain ESM) — just
-allow outbound HTTPS for the ZIP upload.
-
-## Add or edit themes
-
-Everything lives in `src/themes.js`. Each theme is:
-
-```js
-{
-  id, eyebrow, title, subtitle, hook /* cover motif */,
-  closing: { title, subtitle },
-  items: [
-    { name, tag, desc /* ~2 sentences */, points: [p1, p2], motif },
-    ...
-  ],
-}
-```
-
-`motif` is any icon name from `src/illustrations.js` (`robot`, `plug`, `code`,
-`search`, `chart`, `shield`, …). Keep copy English; the build rejects CJK.
+A plain stdio MCP server — deploys straight from a Git URL (Nodeflare runs it and
+converts stdio → SSE). No port, no build step; just allow outbound HTTPS for the ZIP
+upload.
 
 ## Files
 
-- `src/index.js` — MCP server (stdio); registers the tools, renders → zips → uploads → replies
-- `src/generate.js` — `renderPost()`: build slide list → render to PNG buffers in memory (no disk)
+- `src/index.js` — MCP server (stdio): `list_themes`, `pick_theme`, `render_post`
+- `src/themes.js` — the 30 topics (titles only) + the Nodeflare fact sheet
+- `src/generate.js` — `renderContent()`: AI content → PNG buffers in memory (English-only guard)
 - `src/render.js` — paper + blue card + chrome + cover/item/closing layouts
 - `src/illustrations.js` — flat line-art icons + the busy cover scene (a.png style)
-- `src/themes.js` — the ~30 themes
-- `src/caption.js` — English caption.md builder + CJK guard
-- `src/zip.js` — dependency-free ZIP writer (STORE method) for bundling the slides
-- `src/upload.js` — uploads the ZIP to litterbox (fallback 0x0.st) via built-in fetch/FormData
+- `src/zip.js` — dependency-free ZIP writer (STORE)
+- `src/upload.js` — uploads the ZIP to litterbox (fallback 0x0.st)
+- `src/caption.js` — the English-only (CJK) guard
 - `src/config.js` — geometry + palette (measured from a.png)
 - `src/fonts.js` — bundled Inter (English)

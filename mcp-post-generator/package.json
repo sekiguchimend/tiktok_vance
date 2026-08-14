@@ -1,9 +1,9 @@
 {
   "name": "mcp-post-generator-b",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "MCP server (stdio) that renders TikTok/IG carousel posts (1080x1320) entirely in code, in memory, bundles the slides into a ZIP uploaded to a temporary file host, and returns an English title/overview + the ZIP URL (plus the cover inline as a preview).",
+  "description": "MCP server (stdio): gives the AI 30 post topics + a renderer. The AI picks a topic, researches and writes the content, and render_post draws it in the a.png card style (1080x1320), zips it, uploads to a temporary host, and returns the ZIP URL + cover preview.",
   "license": "MIT",
   "bin": {
     "mcp-post-generator": "src/index.js"
