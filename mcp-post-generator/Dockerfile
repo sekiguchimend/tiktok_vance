@@ -1,4 +1,4 @@
-# post-generator-b — remote MCP server (Streamable HTTP).
+# post-generator-b — MCP server (stdio by default; HTTP optional).
 #
 # Each post is rendered in memory, bundled into a ZIP, and uploaded to a free
 # temporary file host; the response carries the title/overview + that ZIP URL and
@@ -10,7 +10,6 @@
 FROM node:22-slim
 
 ENV NODE_ENV=production
-ENV PORT=8787
 WORKDIR /app
 
 # Install production dependencies first (better layer caching).
@@ -24,9 +23,9 @@ COPY src ./src
 # Run as the built-in non-root user; the app needs no write access.
 USER node
 
-# Listens on $PORT (default 8787). Optional: MCP_POST_UPLOAD_TTL = 1h|12h|24h|72h.
-EXPOSE 8787
-
-# MCP over Streamable HTTP at POST /mcp; logs go to stderr.
-# Point clients at http://<host>:8787/mcp
-CMD ["node", "src/index.js"]
+# JSON-RPC over stdio (stdout stays clean for the protocol; logs go to stderr).
+# The host launches this via `docker run --rm -i --init mcp-post-generator`.
+# Optional: set MCP_HTTP=1 (and EXPOSE/-p $PORT, default 8787) to run the
+# Streamable HTTP listener at POST /mcp instead, for self-hosting.
+# Optional: MCP_POST_UPLOAD_TTL = 1h | 12h | 24h | 72h (default 72h).
+ENTRYPOINT ["node", "src/index.js"]
