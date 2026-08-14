@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# nothing is written at runtime, but ignore stray render output just in case
+output/
+posts/
+
+# logs / OS / editor
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.env
