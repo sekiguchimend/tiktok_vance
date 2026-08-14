@@ -5,10 +5,14 @@ carousel in the **a.png card style** — reproduced **entirely in code** (no ima
 file, no AI image generation). It picks one of ~30 built-in "listicle" themes
 (e.g. *"7 AI tools that feel like cheating"*), renders every slide with
 `@napi-rs/canvas` at exact size **in memory**, and hands everything back in the
-tool **response**: the post title + overview as text, a **download URL for a ZIP**
-of every slide + `caption.md`, and the **cover inline as a preview**. Bundling one
-small ZIP link (instead of many big inline images) is what survives host size caps
-and code-mode servers, and lets the user grab the whole set at once.
+tool **response**: the post title + overview as text, a **ZIP download URL** (every
+slide + `caption.md`, uploaded to a temporary file host), and the **cover inline as a
+preview**. Bundling one small ZIP link (instead of many big inline images) is what
+survives host size caps and code-mode servers, and lets the user grab the whole set
+at once.
+
+> The ZIP is uploaded to **litterbox** (fallback **0x0.st**), so the link is
+> **temporary** — download it soon. See *Uploads & expiry* below.
 
 ![preview](assets/preview.png)
 
@@ -25,7 +29,6 @@ and code-mode servers, and lets the user grab the whole set at once.
 | Method / Path | Purpose |
 |---|---|
 | `POST /mcp` | MCP over Streamable HTTP (stateless — one server per request). |
-| `GET /download/<id>.zip` | Downloads a generated post as a ZIP (slides + `caption.md`). |
 | `GET /health` | Liveness + theme count. |
 
 ## Tools
@@ -33,7 +36,21 @@ and code-mode servers, and lets the user grab the whole set at once.
 | Tool | Args | What it does |
 |---|---|---|
 | `list_themes` | — | Lists the ~30 themes (`id`, `title`, item count). |
-| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, and returns: one text block (title + overview + **ZIP download URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. |
+| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, uploads it to a temporary host, and returns: one text block (title + overview + **ZIP URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. |
+
+## Uploads & expiry
+
+The ZIP is sent to a no-auth temporary file host using Node's built-in `fetch` /
+`FormData` — no HTTP library:
+
+- **litterbox** (`litter.catbox.moe`) — primary. Auto-deletes after the TTL; the URL
+  expires with it. Allowed TTLs: `1h` / `12h` / `24h` / `72h`, set via
+  `MCP_POST_UPLOAD_TTL` (default `72h`, the max).
+- **0x0.st** — fallback if litterbox fails. Retention is size-based (~30–365 days;
+  smaller files last longer).
+
+⚠️ Both are **temporary** — this is "download it soon" delivery, not permanent
+storage. For permanent links, swap the uploader for R2/S3 (easy to add).
 
 ## Run
 
@@ -44,23 +61,22 @@ PORT=8787 node src/index.js
 ```
 
 - `PORT` — listen port (default `8787`).
-- `PUBLIC_BASE_URL` — **optional**. The ZIP download link is normally derived from the
-  request's `Host` / `X-Forwarded-*` headers, so it already points at the real public
-  host behind a proxy. Set `PUBLIC_BASE_URL` only to force a fixed base (e.g. a CDN).
+- `MCP_POST_UPLOAD_TTL` — litterbox TTL: `1h` / `12h` / `24h` / `72h` (default `72h`).
 
-Nothing is written to disk — posts are rendered in memory and the ZIP is kept in a
-small in-memory cache (last 30) served at `/download/<id>.zip`.
+Nothing is written to disk — posts are rendered in memory and the ZIP is uploaded to
+a temporary file host, so the download link works from any client without this server
+needing a public URL of its own.
 
 ### Docker
 
 ```bash
 docker build -t post-generator-b .
-docker run --rm -p 8787:8787 post-generator-b   # add -e PUBLIC_BASE_URL=... only to force a fixed base
+docker run --rm -p 8787:8787 post-generator-b
 # clients -> http://localhost:8787/mcp
 ```
 
-The container runs as a non-root user and writes nothing at runtime (the ZIP lives
-in an in-memory cache).
+The container runs as a non-root user and writes nothing at runtime. It only needs
+**outbound** HTTPS to the upload hosts (`litter.catbox.moe`, `0x0.st`).
 
 ## Register in an MCP client
 
@@ -84,7 +100,8 @@ claude mcp add --transport http post-generator-b https://your-host/mcp
 ```
 
 Then ask: *"generate a random post"* → the assistant calls `generate_post` and gets
-the title + overview, a ZIP download link for all slides, and the cover as a preview.
+the title + overview, a temporary ZIP download link for all slides, and the cover as a
+preview.
 
 ### Host on Nodeflare
 
@@ -111,9 +128,10 @@ Everything lives in `src/themes.js`. Each theme is:
 
 ## Files
 
-- `src/index.js` — remote MCP server (Streamable HTTP) + ZIP download endpoint; exports `createApp`
+- `src/index.js` — remote MCP server (Streamable HTTP); renders → zips → uploads → replies; exports `createApp`
 - `src/generate.js` — `renderPost()`: build slide list → render to PNG buffers in memory (no disk)
 - `src/zip.js` — dependency-free ZIP writer (STORE method) for bundling the slides
+- `src/upload.js` — uploads the ZIP to litterbox (fallback 0x0.st) via built-in fetch/FormData
 - `src/render.js` — paper + blue card + chrome + cover/item/closing layouts
 - `src/illustrations.js` — flat line-art icons + the busy cover scene (a.png style)
 - `src/themes.js` — the ~30 themes

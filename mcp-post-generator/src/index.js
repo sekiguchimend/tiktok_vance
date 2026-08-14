@@ -2,49 +2,32 @@
 // Remote MCP server (Streamable HTTP, stateless). No stdio transport.
 //
 // generate_post renders the whole carousel in memory, bundles all slides +
-// caption.md into a single ZIP, and returns in the tool response:
-//   - text: the post title + overview + a download URL for the ZIP
+// caption.md into a ZIP, uploads it to a no-auth temporary file host, and
+// returns in the tool response:
+//   - text: the post title + overview + the ZIP download URL (with expiry note)
 //   - one inline image: the cover, as a preview
-// Delivering ONE small download URL (instead of many big inline images) is what
-// survives size caps and code-mode hosts, and lets the user grab everything at
-// once. The ZIP is held in memory and served at /download/<id>.zip.
+// Uploading to a temp host (litterbox -> 0x0.st) gives a universally reachable
+// link that works from any client / code-mode host, without this server needing
+// a public URL of its own. The links are TEMPORARY (download soon).
 //
 // Env:
-//   PORT             (default 8787)
-//   PUBLIC_BASE_URL  external base URL for the download links (default http://localhost:PORT)
+//   PORT                  (default 8787)
+//   MCP_POST_UPLOAD_TTL   litterbox TTL: 1h | 12h | 24h | 72h (default 72h)
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { renderPost } from './generate.js';
 import { makeZip } from './zip.js';
+import { uploadTemp } from './upload.js';
 import { listThemes, THEMES } from './themes.js';
 
 const PORT = Number(process.env.PORT) || 8787;
-// Optional hard override. When unset, the base URL is derived per-request from the
-// Host / X-Forwarded-* headers, so download links point at the real public host.
-const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 
-// In-memory store of recent ZIPs, capped so memory stays bounded.
-const POSTS = new Map(); // id -> { zip: Buffer, filename: string, createdAt: number }
-const MAX_POSTS = 30;
-function storePost(zip, filename) {
-  const id = randomUUID();
-  POSTS.set(id, { zip, filename, createdAt: Date.now() });
-  if (POSTS.size > MAX_POSTS) {
-    let oldestId, oldest = Infinity;
-    for (const [k, v] of POSTS) if (v.createdAt < oldest) { oldest = v.createdAt; oldestId = k; }
-    POSTS.delete(oldestId);
-  }
-  return id;
-}
-
-// A fresh MCP server per request (stateless HTTP mode). `base` is the public URL
-// (scheme + host) used to build download links for this request.
-function buildServer(base) {
-  const server = new McpServer({ name: 'post-generator-b', version: '0.4.0' });
+// A fresh MCP server per request (stateless HTTP mode).
+function buildServer() {
+  const server = new McpServer({ name: 'post-generator-b', version: '0.5.0' });
 
   server.registerTool(
     'list_themes',
@@ -67,9 +50,9 @@ function buildServer(base) {
       title: 'Generate a carousel post',
       description:
         'Render a full carousel (cover + one slide per item + closing) in the a.png card style, fully in ' +
-        'code at 1080x1320. Bundles every slide + caption.md into a single ZIP and returns the post title + ' +
-        'overview and a download URL for the ZIP, plus the cover image inline as a preview. ' +
-        'If themeId is omitted, a random theme is chosen.',
+        'code at 1080x1320. Bundles every slide + caption.md into a ZIP, uploads it to a temporary file host, ' +
+        'and returns the post title + overview + a download URL for the ZIP, plus the cover image inline as a ' +
+        'preview. The download link is temporary — grab it soon. If themeId is omitted, a random theme is chosen.',
       inputSchema: {
         themeId: z.string().optional().describe('Theme id from list_themes. Omit for a random theme.'),
         seed: z.number().int().optional().describe('Optional seed for reproducible output.'),
@@ -84,15 +67,21 @@ function buildServer(base) {
       }
       const r = await renderPost({ themeId, seed });
 
-      // Bundle every slide + caption.md into one ZIP and stash it for download.
+      // Bundle every slide + caption.md into one ZIP and upload it.
       const files = r.images.map((im) => ({ name: im.name, buffer: im.buffer }));
       files.push({ name: 'caption.md', buffer: Buffer.from(r.captionMd, 'utf8') });
-      const id = storePost(makeZip(files), `${r.themeId}.zip`);
-      const url = `${base}/download/${id}.zip`;
+      const zip = await makeZip(files);
+
+      let up;
+      try {
+        up = await uploadTemp(zip, `${r.themeId}.zip`);
+      } catch (err) {
+        return { isError: true, content: [{ type: 'text', text: `ZIP upload failed: ${err.message}` }] };
+      }
 
       const text =
         `${r.caption.recommended.title}\n\n${r.caption.recommended.body}\n\n` +
-        `Download all ${r.images.length} slides + caption (ZIP): ${url}`;
+        `Download all ${r.images.length} slides + caption (ZIP, ${up.host}, expires ~${up.ttl}): ${up.url}`;
 
       return {
         content: [
@@ -106,34 +95,15 @@ function buildServer(base) {
   return server;
 }
 
-// Derive the public base URL for this request (honors reverse-proxy headers).
-function baseUrlFor(req) {
-  if (PUBLIC_BASE) return PUBLIC_BASE;
-  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
-  const host = req.headers['x-forwarded-host'] || req.get('host');
-  return `${proto}://${host}`;
-}
-
 export function createApp() {
   const app = express();
-  app.set('trust proxy', true);
   app.use(express.json({ limit: '8mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true, name: 'post-generator-b', themes: THEMES.length }));
 
-  // Download a generated post as a single ZIP.
-  app.get('/download/:file', (req, res) => {
-    const id = req.params.file.replace(/\.zip$/i, '');
-    const post = POSTS.get(id);
-    if (!post) return res.status(404).json({ error: 'Not found or expired.' });
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${post.filename}"`);
-    res.send(post.zip);
-  });
-
   // Streamable HTTP MCP endpoint (stateless: new server+transport per request).
   app.post('/mcp', async (req, res) => {
-    const server = buildServer(baseUrlFor(req));
+    const server = buildServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); server.close(); });
     try {
@@ -158,10 +128,7 @@ export function createApp() {
 // Only start listening when run directly (not when imported by tests).
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
-  createApp().listen(PORT, () => {
-    const shown = PUBLIC_BASE || `http://localhost:${PORT}`;
-    console.error(`post-generator-b MCP (Streamable HTTP) on ${shown}/mcp`);
-    console.error(`  downloads at ${shown}/download/<id>.zip  |  health at ${shown}/health`);
-    console.error(PUBLIC_BASE ? '  base URL: fixed via PUBLIC_BASE_URL' : '  base URL: derived per-request from Host header');
-  });
+  createApp().listen(PORT, () =>
+    console.error(`post-generator-b MCP (Streamable HTTP) on http://localhost:${PORT}/mcp`)
+  );
 }

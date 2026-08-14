@@ -1,6 +1,8 @@
 // Minimal ZIP writer (STORE method, no compression) — dependency-free.
-// PNGs are already compressed, so storing them keeps the archive small while
-// staying trivial and fast. Enough to bundle the slides + caption.md.
+//
+// We intentionally do NOT use jszip here: jszip + @napi-rs/canvas in the same
+// process segfaults in this runtime. PNGs are already compressed, so storing
+// them keeps the archive small while staying trivial, fast and stable.
 
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -19,7 +21,7 @@ function crc32(buf) {
 }
 
 // files: [{ name: string, buffer: Buffer }] -> Buffer (a valid .zip)
-export function makeZip(files) {
+export async function makeZip(files) {
   const DOS_TIME = 0; // 1980-01-01 00:00 — fixed so output is deterministic
   const DOS_DATE = 0x0021;
   const chunks = [];
