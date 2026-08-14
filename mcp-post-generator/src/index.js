@@ -23,7 +23,9 @@ import { makeZip } from './zip.js';
 import { listThemes, THEMES } from './themes.js';
 
 const PORT = Number(process.env.PORT) || 8787;
-const BASE = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+// Optional hard override. When unset, the base URL is derived per-request from the
+// Host / X-Forwarded-* headers, so download links point at the real public host.
+const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 
 // In-memory store of recent ZIPs, capped so memory stays bounded.
 const POSTS = new Map(); // id -> { zip: Buffer, filename: string, createdAt: number }
@@ -39,8 +41,9 @@ function storePost(zip, filename) {
   return id;
 }
 
-// A fresh MCP server per request (stateless HTTP mode).
-function buildServer() {
+// A fresh MCP server per request (stateless HTTP mode). `base` is the public URL
+// (scheme + host) used to build download links for this request.
+function buildServer(base) {
   const server = new McpServer({ name: 'post-generator-b', version: '0.4.0' });
 
   server.registerTool(
@@ -85,7 +88,7 @@ function buildServer() {
       const files = r.images.map((im) => ({ name: im.name, buffer: im.buffer }));
       files.push({ name: 'caption.md', buffer: Buffer.from(r.captionMd, 'utf8') });
       const id = storePost(makeZip(files), `${r.themeId}.zip`);
-      const url = `${BASE}/download/${id}.zip`;
+      const url = `${base}/download/${id}.zip`;
 
       const text =
         `${r.caption.recommended.title}\n\n${r.caption.recommended.body}\n\n` +
@@ -103,8 +106,17 @@ function buildServer() {
   return server;
 }
 
+// Derive the public base URL for this request (honors reverse-proxy headers).
+function baseUrlFor(req) {
+  if (PUBLIC_BASE) return PUBLIC_BASE;
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`;
+}
+
 export function createApp() {
   const app = express();
+  app.set('trust proxy', true);
   app.use(express.json({ limit: '8mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true, name: 'post-generator-b', themes: THEMES.length }));
@@ -121,7 +133,7 @@ export function createApp() {
 
   // Streamable HTTP MCP endpoint (stateless: new server+transport per request).
   app.post('/mcp', async (req, res) => {
-    const server = buildServer();
+    const server = buildServer(baseUrlFor(req));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); server.close(); });
     try {
@@ -147,7 +159,9 @@ export function createApp() {
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
   createApp().listen(PORT, () => {
-    console.error(`post-generator-b MCP (Streamable HTTP) on ${BASE}/mcp`);
-    console.error(`  downloads at ${BASE}/download/<id>.zip  |  health at ${BASE}/health`);
+    const shown = PUBLIC_BASE || `http://localhost:${PORT}`;
+    console.error(`post-generator-b MCP (Streamable HTTP) on ${shown}/mcp`);
+    console.error(`  downloads at ${shown}/download/<id>.zip  |  health at ${shown}/health`);
+    console.error(PUBLIC_BASE ? '  base URL: fixed via PUBLIC_BASE_URL' : '  base URL: derived per-request from Host header');
   });
 }

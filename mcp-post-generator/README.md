@@ -40,13 +40,13 @@ and code-mode servers, and lets the user grab the whole set at once.
 ```bash
 cd mcp-post-generator
 npm install
-PORT=8787 PUBLIC_BASE_URL=https://your-host node src/index.js
+PORT=8787 node src/index.js
 ```
 
 - `PORT` — listen port (default `8787`).
-- `PUBLIC_BASE_URL` — external base URL used to build the ZIP download links. Set it
-  to whatever URL the server is reachable at (proxy, tunnel, or a host). Defaults to
-  `http://localhost:PORT`.
+- `PUBLIC_BASE_URL` — **optional**. The ZIP download link is normally derived from the
+  request's `Host` / `X-Forwarded-*` headers, so it already points at the real public
+  host behind a proxy. Set `PUBLIC_BASE_URL` only to force a fixed base (e.g. a CDN).
 
 Nothing is written to disk — posts are rendered in memory and the ZIP is kept in a
 small in-memory cache (last 30) served at `/download/<id>.zip`.
@@ -55,7 +55,7 @@ small in-memory cache (last 30) served at `/download/<id>.zip`.
 
 ```bash
 docker build -t post-generator-b .
-docker run --rm -p 8787:8787 -e PUBLIC_BASE_URL=https://your-host post-generator-b
+docker run --rm -p 8787:8787 post-generator-b   # add -e PUBLIC_BASE_URL=... only to force a fixed base
 # clients -> http://localhost:8787/mcp
 ```
 
