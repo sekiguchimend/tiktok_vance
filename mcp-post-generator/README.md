@@ -1,42 +1,33 @@
-# post-generator-b (remote MCP)
+# post-generator-b (MCP, stdio)
 
-A **remote** MCP server (Streamable HTTP) that generates a TikTok/Instagram
-carousel in the **a.png card style** — reproduced **entirely in code** (no image
-file, no AI image generation). It picks one of ~30 built-in "listicle" themes
-(e.g. *"7 AI tools that feel like cheating"*), renders every slide with
-`@napi-rs/canvas` at exact size **in memory**, and hands everything back in the
-tool **response**: the post title + overview as text, a **ZIP download URL** (every
-slide + `caption.md`, uploaded to a temporary file host), and the **cover inline as a
-preview**. Bundling one small ZIP link (instead of many big inline images) is what
-survives host size caps and code-mode servers, and lets the user grab the whole set
-at once.
+A **stdio** MCP server that generates a TikTok/Instagram carousel in the **a.png
+card style** — reproduced **entirely in code** (no image file, no AI image
+generation). It picks one of ~30 built-in "listicle" themes (e.g. *"7 AI tools that
+feel like cheating"*), renders every slide with `@napi-rs/canvas` at exact size **in
+memory**, bundles them into a ZIP, uploads the ZIP to a temporary file host, and hands
+back in the tool **response**: the post title + overview as text, the **ZIP download
+URL**, and the **cover inline as a preview**. **Nothing is written to disk.**
+
+Bundling one small ZIP link (instead of many big inline images) is what survives host
+size caps and code-mode sandboxes, and lets the user grab the whole set at once.
 
 > The ZIP is uploaded to **litterbox** (fallback **0x0.st**), so the link is
 > **temporary** — download it soon. See *Uploads & expiry* below.
 
 ![preview](assets/preview.png)
 
-- Card background, the top-right arrow, and the `www.nodeflare.tech` URL are fixed
-  chrome, drawn to match `a.png`. Text is **English only** (build fails on any CJK).
-- Output size **1080 × 1320** (same ratio as `a.png`).
-- A post = **cover + one slide per item + closing** (URL call-to-action).
-- Each item slide carries a tag, a full description, and two takeaways — dense copy,
-  big and bold, like `a.png` (not one short line).
-- **No stdio transport** — this is HTTP-only, meant to be hosted (e.g. on Nodeflare).
+## Transport
 
-## Endpoints
-
-| Method / Path | Purpose |
-|---|---|
-| `POST /mcp` | MCP over Streamable HTTP (stateless — one server per request). |
-| `GET /health` | Liveness + theme count. |
+**stdio** — JSON-RPC over stdin/stdout. This is how stdio→SSE hosts (Nodeflare /
+code-mode) launch and bridge it; the ZIP upload only needs **outbound HTTPS**, so no
+port is exposed. (This mirrors the sibling `account_a` server.)
 
 ## Tools
 
 | Tool | Args | What it does |
 |---|---|---|
 | `list_themes` | — | Lists the ~30 themes (`id`, `title`, item count). |
-| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, uploads it to a temporary host, and returns: one text block (title + overview + **ZIP URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. |
+| `generate_post` | `themeId?`, `seed?` | Renders a full carousel in memory, bundles all slides + `caption.md` into a ZIP, uploads it to a temporary host, and returns: one text block (title + overview + **ZIP URL**) plus the **cover inline** as a preview. Omit `themeId` for a **random** theme. On any failure it returns `isError` with the actual message. |
 
 ## Uploads & expiry
 
@@ -57,37 +48,34 @@ storage. For permanent links, swap the uploader for R2/S3 (easy to add).
 ```bash
 cd mcp-post-generator
 npm install
-PORT=8787 node src/index.js
+node src/index.js          # speaks MCP over stdio
 ```
 
-- `PORT` — listen port (default `8787`).
 - `MCP_POST_UPLOAD_TTL` — litterbox TTL: `1h` / `12h` / `24h` / `72h` (default `72h`).
 
-Nothing is written to disk — posts are rendered in memory and the ZIP is uploaded to
-a temporary file host, so the download link works from any client without this server
-needing a public URL of its own.
+Nothing is written to disk — posts are rendered in memory and the ZIP is uploaded to a
+temporary file host.
 
 ### Docker
 
 ```bash
 docker build -t post-generator-b .
-docker run --rm -p 8787:8787 post-generator-b
-# clients -> http://localhost:8787/mcp
+docker run --rm -i --init post-generator-b
 ```
 
-The container runs as a non-root user and writes nothing at runtime. It only needs
-**outbound** HTTPS to the upload hosts (`litter.catbox.moe`, `0x0.st`).
+Runs as a non-root user and writes nothing at runtime. It only needs **outbound**
+HTTPS to the upload hosts (`litter.catbox.moe`, `0x0.st`).
 
 ## Register in an MCP client
 
-Point the client at the remote URL (no local command):
+Launch the server as a local stdio command:
 
 ```json
 {
   "mcpServers": {
     "post-generator-b": {
-      "type": "http",
-      "url": "https://your-host/mcp"
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-post-generator/src/index.js"]
     }
   }
 }
@@ -96,17 +84,14 @@ Point the client at the remote URL (no local command):
 Claude Code CLI:
 
 ```bash
-claude mcp add --transport http post-generator-b https://your-host/mcp
+claude mcp add post-generator-b -- node /absolute/path/to/mcp-post-generator/src/index.js
 ```
-
-Then ask: *"generate a random post"* → the assistant calls `generate_post` and gets
-the title + overview, a temporary ZIP download link for all slides, and the cover as a
-preview.
 
 ### Host on Nodeflare
 
-This is already an SSE/HTTP-style MCP server, so it can be deployed straight from a
-Git URL: expose `PORT` and point clients at `<assigned-url>/mcp`.
+It's a plain stdio MCP server, so it deploys straight from a Git URL: Nodeflare runs
+it and converts stdio → SSE for clients. No port, no build step (plain ESM) — just
+allow outbound HTTPS for the ZIP upload.
 
 ## Add or edit themes
 
@@ -128,13 +113,13 @@ Everything lives in `src/themes.js`. Each theme is:
 
 ## Files
 
-- `src/index.js` — remote MCP server (Streamable HTTP); renders → zips → uploads → replies; exports `createApp`
+- `src/index.js` — MCP server (stdio); registers the tools, renders → zips → uploads → replies
 - `src/generate.js` — `renderPost()`: build slide list → render to PNG buffers in memory (no disk)
-- `src/zip.js` — dependency-free ZIP writer (STORE method) for bundling the slides
-- `src/upload.js` — uploads the ZIP to litterbox (fallback 0x0.st) via built-in fetch/FormData
 - `src/render.js` — paper + blue card + chrome + cover/item/closing layouts
 - `src/illustrations.js` — flat line-art icons + the busy cover scene (a.png style)
 - `src/themes.js` — the ~30 themes
 - `src/caption.js` — English caption.md builder + CJK guard
+- `src/zip.js` — dependency-free ZIP writer (STORE method) for bundling the slides
+- `src/upload.js` — uploads the ZIP to litterbox (fallback 0x0.st) via built-in fetch/FormData
 - `src/config.js` — geometry + palette (measured from a.png)
 - `src/fonts.js` — bundled Inter (English)

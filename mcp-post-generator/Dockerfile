@@ -1,4 +1,4 @@
-# post-generator-b — MCP server (stdio by default; HTTP optional).
+# post-generator-b — MCP server (stdio).
 #
 # Each post is rendered in memory, bundled into a ZIP, and uploaded to a free
 # temporary file host; the response carries the title/overview + that ZIP URL and
@@ -25,7 +25,5 @@ USER node
 
 # JSON-RPC over stdio (stdout stays clean for the protocol; logs go to stderr).
 # The host launches this via `docker run --rm -i --init mcp-post-generator`.
-# Optional: set MCP_HTTP=1 (and EXPOSE/-p $PORT, default 8787) to run the
-# Streamable HTTP listener at POST /mcp instead, for self-hosting.
 # Optional: MCP_POST_UPLOAD_TTL = 1h | 12h | 24h | 72h (default 72h).
 ENTRYPOINT ["node", "src/index.js"]
