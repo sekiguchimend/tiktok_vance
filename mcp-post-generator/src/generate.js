@@ -4,7 +4,7 @@
 import { renderSlide, CANVAS } from './render.js';
 import { MOTIF_NAMES } from './illustrations.js';
 import { findCJK } from './caption.js';
-import { THEMES } from './themes.js';
+import { THEMES, withNodeflareLast } from './themes.js';
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -66,6 +66,10 @@ export async function renderContent(content, seed) {
   if (seed == null) seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
   if (!content?.title) throw new Error('title is required');
   if (!Array.isArray(content.items) || content.items.length === 0) throw new Error('items must be a non-empty array');
+
+  // Nodeflare is always the fixed final pick — append it server-side so it can
+  // never be dropped, regardless of what the AI authored.
+  content = { ...content, items: withNodeflareLast(content.items) };
 
   const cjk = findCJK(collectText(content));
   if (cjk.length) {

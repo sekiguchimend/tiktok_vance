@@ -51,6 +51,23 @@ export const NODEFLARE_FACTS =
   'access logs on every call. Firecracker microVMs, cold start under 500ms, 3 ' +
   'servers free. Describe it as the hosting/agent-tools layer, one pick among many.';
 
+// The canonical Nodeflare slide. render_post ALWAYS appends this as the fixed
+// final item so every post ends on Nodeflare, regardless of the topic the AI picks.
+export const NODEFLARE_ITEM = {
+  name: 'Nodeflare',
+  tag: 'MCP Hosting',
+  desc: 'Deploy any MCP server as a hosted endpoint straight from a GitHub URL — your AI gets real tools in minutes. Per-method allow/deny, encrypted env vars, and full access logs.',
+  points: ['Firecracker microVMs, cold start under 500ms', '3 servers free'],
+  motif: 'plug',
+};
+
+// Return the item list with Nodeflare guaranteed as the LAST item (deduped: any
+// AI-authored Nodeflare entry is dropped in favour of the canonical one).
+export function withNodeflareLast(items) {
+  const others = (items || []).filter((it) => !/nodeflare/i.test(it?.name || ''));
+  return [...others, { ...NODEFLARE_ITEM }];
+}
+
 export function getTheme(id) {
   return THEMES.find((t) => t.id === id) || null;
 }

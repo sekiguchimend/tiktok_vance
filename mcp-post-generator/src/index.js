@@ -25,13 +25,14 @@ import { listThemes, THEMES, NODEFLARE_FACTS } from './themes.js';
 const MOTIFS = MOTIF_NAMES.join(', ');
 
 const AUTHOR_GUIDE =
-  'You write the content. For the chosen title, research the exact number of real, ' +
-  'currently-popular tools/sites that fit it. For each item provide: name, tag (1-2 ' +
+  'You write the content. Nodeflare is ALWAYS added by the renderer as the fixed ' +
+  'FINAL pick, so research ONE FEWER real tool than the title count (e.g. a "7 ..." ' +
+  'title needs 6 items from you; Nodeflare becomes the 7th). Do NOT include Nodeflare ' +
+  'yourself — if you do it is de-duplicated. For each item provide: name, tag (1-2 ' +
   'words), desc (~2 short sentences, benefit-first), points (2 short takeaways), and ' +
   `motif (an icon name from: ${MOTIFS}). ` +
   'ALL text must be English (no CJK — the renderer rejects it). Keep it punchy and ' +
-  'TikTok-friendly. If the topic is nodeflareFit, include Nodeflare as ONE of the ' +
-  `picks, described accurately: ${NODEFLARE_FACTS} ` +
+  `TikTok-friendly. For reference, Nodeflare (the fixed last slide) is: ${NODEFLARE_FACTS} ` +
   'Then call render_post with { eyebrow, title, subtitle, hook, items, closing }.';
 
 const slug = (s) => (s || 'post').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'post';
@@ -95,7 +96,7 @@ server.registerTool(
       eyebrow: z.string().optional().describe('Small label above the title, e.g. "AI Tools".'),
       subtitle: z.string().optional().describe('One-line cover subtitle.'),
       hook: z.string().optional().describe(`Cover icon from: ${MOTIFS}`),
-      items: z.array(ItemSchema).min(1).max(10).describe('One slide per item; match the count in the title.'),
+      items: z.array(ItemSchema).min(1).max(10).describe('One slide per item. Provide ONE FEWER than the title count — Nodeflare is auto-appended as the fixed final item.'),
       closing: z.object({
         eyebrow: z.string().optional(),
         title: z.string().optional().describe('Use \\n to force line breaks.'),
